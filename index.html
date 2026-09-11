@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Phrase Recorder (Keyboard Control)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; padding: 20px; background: #f5f6fa; color: #2c3e50; }
+    h1 { margin-top: 0; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    
+    .panel { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    
+    textarea { width: 100%; min-height: 100px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-family: monospace; font-size: 14px; resize: vertical; }
+    
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #3498db; color: white; }
+    .btn-primary:hover:not(:disabled) { background: #2980b9; }
+    .btn-danger { background: #e74c3c; color: white; }
+    .btn-danger:hover:not(:disabled) { background: #c0392b; }
+    .btn-success { background: #27ae60; color: white; }
+    .btn-success:hover:not(:disabled) { background: #229954; }
+    .btn-secondary { background: #95a5a6; color: white; }
+    .btn-secondary:hover:not(:disabled) { background: #7f8c8d; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    
+    .stats { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
+    .stat-box { background: #ecf0f1; padding: 8px 16px; border-radius: 6px; font-size: 14px; }
+    .stat-box b { color: #2c3e50; }
+    
+    table { width: 100%; border-collapse: collapse; outline: none; }
+    th { background: #34495e; color: white; padding: 10px; text-align: left; font-size: 13px; position: sticky; top: 0; z-index: 10; }
+    td { padding: 10px; border-bottom: 1px solid #ecf0f1; vertical-align: middle; }
+    
+    /* Подсветка активной строки */
+    tr.active-row { 
+        background-color: #fff8e1 !important; 
+        border-left: 4px solid #f1c40f;
+        box-shadow: inset 0 0 0 1px #f1c40f;
+    }
+    
+    tr:hover { background: #fafbfc; }
+    tr.recording { background: #fff5f5 !important; border-left: 4px solid #e74c3c; }
+    tr.recorded { background: #f0fff4; border-left: 4px solid #27ae60; }
+    
+    .phrase-text { max-width: 300px; font-size: 14px; line-height: 1.4; }
+    
+    .waveform { width: 200px; height: 40px; background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 4px; display: block; }
+    
+    .status-badge { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .status-pending { background: #ecf0f1; color: #7f8c8d; }
+    .status-recording { background: #e74c3c; color: white; animation: pulse 1s infinite; }
+    .status-recorded { background: #27ae60; color: white; }
+    @keyframes pulse { 50% { opacity: 0.6; } }
+    
+    .actions { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+    .duration { font-family: monospace; font-size: 13px; color: #7f8c8d; }
+    
+    .timer { font-family: monospace; font-size: 18px; color: #e74c3c; font-weight: bold; }
+    
+    .hint { font-size: 12px; color: #7f8c8d; margin-top: 5px; }
+    .hotkeys-hint { 
+        background: #e8f4fd; 
+        border: 1px solid #b6e0fe; 
+        padding: 10px; 
+        border-radius: 6px; 
+        font-size: 13px; 
+        margin-bottom: 15px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+    .key-badge {
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-family: monospace;
+        font-weight: bold;
+        color: #d35400;
+        box-shadow: 0 1px 0 #ccc;
+    }
+    
+    .file-input-wrapper { display: inline-block; }
+    .file-input-wrapper input { display: none; }
+
+    .filename-preview {
+        font-size: 11px;
+        color: #7f8c8d;
+        font-family: monospace;
+        background: #f1f2f6;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-top: 4px;
+        display: inline-block;
+    }
+    
+    .suffix-panel {
+        background: #e8f6fd;
+        border: 1px solid #bee5eb;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex-wrap: wrap;
+    }
+    .suffix-panel input {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+        width: 200px;
+    }
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h1>⌨️ Phrase Recorder (Keyboard Mode)</h1>
+    
+    <div class="panel">
+        <h3 style="margin-top:0">1. Введите фразы</h3>
+        <textarea id="phrasesInput" placeholder="Привет, как дела?
+Сегодня хорошая погода.">Привет, как дела?
+Сегодня хорошая погода.
+Я люблю программировать.</textarea>
+        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="buildTable()">📋 Создать таблицу</button>
+            <label class="btn btn-secondary file-input-wrapper">
+                📁 Загрузить из файла
+                <input type="file" accept=".txt,.csv" onchange="loadFromFile(event)">
+            </label>
+        </div>
+    </div>
+
+    <div class="panel" id="recorderPanel" style="display:none">
+        
+        <!-- Подсказка по горячим клавишам -->
+        <div class="hotkeys-hint">
+            <span><span class="key-badge">Enter</span> Старт / Стоп</span>
+            <span><span class="key-badge">↓</span> <span class="key-badge">↑</span> Выбор строки</span>
+            <span><span class="key-badge">Пробел</span> Прослушать</span>
+            <span><span class="key-badge">R</span> Перезаписать</span>
+            <span><span class="key-badge">S</span> Скачать файл</span>
+            <span><span class="key-badge">Z</span> Скачать всё (ZIP)</span>
+            <span><span class="key-badge">F</span> Новый суффикс</span>
+        </div>
+
+        <div class="suffix-panel">
+            <strong>🏷️ Суффикс:</strong>
+            <input type="text" id="fileSuffix" placeholder="например: yura" value="">
+            <button class="btn btn-secondary btn-sm" onclick="generateRandomSuffix()" title="Горячая клавиша: F">🎲 Сгенерировать (F)</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box">Всего: <b id="statTotal">0</b></div>
+            <div class="stat-box">Записано: <b id="statDone" style="color:#27ae60">0</b></div>
+            <div class="stat-box">Осталось: <b id="statLeft">0</b></div>
+            <div style="flex:1"></div>
+            <button class="btn btn-success" onclick="downloadAll()" title="Горячая клавиша: Z">📦 Скачать всё (Z)</button>
+            <button class="btn btn-secondary" onclick="resetAll()">️ Очистить</button>
+        </div>
+        
+        <div class="hint" style="margin-bottom:10px">
+            ✅ Звук: 8kHz, 16bit, Mono. Плавное затухание.
+            <br>️ Требования: 3–15 сек.
+        </div>
+        
+        <!-- Добавлен tabindex="0" чтобы таблица могла получать фокус -->
+        <table id="mainTable" tabindex="0">
+            <thead>
+                <tr>
+                    <th style="width:40px">№</th>
+                    <th>Фраза</th>
+                    <th style="width:100px">Статус</th>
+                    <th style="width:220px">Waveform</th>
+                    <th style="width:80px">Длит.</th>
+                    <th style="width:260px">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="phrasesTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+const MIN_DURATION = 3;
+const MAX_DURATION = 15;
+const TARGET_SAMPLE_RATE = 8000;
+const FADE_OUT_SAMPLES = 2400;
+
+let phrases = [];
+let audioContext = null;
+let mediaStream = null;
+let scriptProcessor = null;
+let analyser = null;
+let currentRecording = null; 
+let animationFrame = null;
+let isProcessing = false;
+
+// Управление фокусом и навигацией
+let currentRowIndex = 0;
+let audioPlayer = null; // Для управления воспроизведением
+
+async function initAudio() {
+    if (audioContext) return;
+    
+    try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { 
+                echoCancellation: false, 
+                noiseSuppression: false, 
+                autoGainControl: false,
+                latency: 0 
+            }
+        });
+
+        audioContext = new AudioContext({
+            sampleRate: 48000,
+            latencyHint: 'interactive'
+        });
+        
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        scriptProcessor = audioContext.createScriptProcessor(8192, 1, 1);
+        
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        
+        source.connect(analyser);
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+        
+        scriptProcessor.onaudioprocess = function(e) {
+            if (!currentRecording || isProcessing) return;
+            isProcessing = true;
+            try {
+                const data = e.inputBuffer.getChannelData(0);
+                currentRecording.buffer.push(new Float32Array(data));
+                currentRecording.totalSamples += data.length;
+            } finally {
+                isProcessing = false;
+            }
+        };
+
+    } catch (err) {
+        alert('Ошибка доступа к микрофону: ' + err.message);
+        console.error(err);
+    }
+}
+
+function loadFromFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        document.getElementById('phrasesInput').value = e.target.result;
+    };
+    reader.readAsText(file);
+}
+
+function generateRandomSuffix() {
+    const now = new Date();
+    const suffix = `s${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
+    document.getElementById('fileSuffix').value = suffix;
+    updateFilenamePreviews();
+    // Обновить превью у всех
+    phrases.forEach((_, i) => {
+        if(phrases[i].buffer) updateActions(i, false);
+    });
+}
+
+function buildTable() {
+    const text = document.getElementById('phrasesInput').value.trim();
+    if (!text) { alert('Введите хотя бы одну фразу'); return; }
+    
+    phrases = text.split('\n').map(s => s.trim()).filter(s => s.length > 0).map(text => ({
+        text: text,
+        buffer: null,
+        duration: 0,
+        wavBlob: null
+    }));
+    
+    currentRowIndex = 0; // Сброс курсора
+    renderTable();
+    document.getElementById('recorderPanel').style.display = 'block';
+    updateStats();
+    
+    // Фокус на таблицу для работы клавиатуры
+    setTimeout(() => document.getElementById('mainTable').focus(), 100);
+}
+
+function renderTable() {
+    const tbody = document.getElementById('phrasesTable');
+    tbody.innerHTML = '';
+    phrases.forEach((p, i) => {
+        const tr = document.createElement('tr');
+        tr.id = 'row-' + i;
+        if (i === currentRowIndex) tr.classList.add('active-row');
+        
+        tr.innerHTML = `
+            <td>${i + 1}</td>
+            <td class="phrase-text">${escapeHtml(p.text)}</td>
+            <td><span class="status-badge status-pending" id="status-${i}">Не записано</span></td>
+            <td><canvas class="waveform" id="wave-${i}" width="200" height="40"></canvas></td>
+            <td class="duration" id="dur-${i}">—</td>
+            <td class="actions" id="actions-${i}">
+                <button class="btn btn-danger btn-sm" onclick="startRecording(${i})"> Записать</button>
+                <span class="filename-preview" id="preview-${i}">...</span>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    updateFilenamePreviews();
+    highlightRow(currentRowIndex);
+}
+
+function highlightRow(index) {
+    // Убираем подсветку со всех
+    document.querySelectorAll('tr').forEach(r => r.classList.remove('active-row'));
+    // Добавляем текущей
+    const row = document.getElementById('row-' + index);
+    if (row) {
+        row.classList.add('active-row');
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function updateStats() {
+    const total = phrases.length;
+    const done = phrases.filter(p => p.buffer).length;
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statDone').textContent = done;
+    document.getElementById('statLeft').textContent = total - done;
+}
+
+document.getElementById('fileSuffix').addEventListener('input', updateFilenamePreviews);
+
+function updateFilenamePreviews() {
+    const suffix = document.getElementById('fileSuffix').value.trim() || 'user';
+    phrases.forEach((_, i) => {
+        const el = document.getElementById('preview-' + i);
+        if (el) {
+            const fileName = `phrase_${String(i + 1).padStart(3, '0')}_${suffix}.wav`;
+            el.textContent = fileName;
+        }
+    });
+}
+
+async function startRecording(rowIndex) {
+    if (currentRecording) {
+        // Если уже идет запись другой строки, останавливаем её сначала (опционально)
+        // Но лучше запретить, чтобы не запутаться
+        if (currentRecording.rowIndex !== rowIndex) {
+             alert('Сначала завершите текущую запись (Enter)');
+             return;
+        }
+    }
+    
+    await initAudio();
+    if (!audioContext) return;
+    if (audioContext.state === 'suspended') await audioContext.resume();
+    
+    await new Promise(r => setTimeout(r, 150));
+
+    const row = document.getElementById('row-' + rowIndex);
+    row.classList.add('recording');
+    row.classList.remove('active-row'); // Убираем желтую рамку во время записи
+    
+    const statusEl = document.getElementById('status-' + rowIndex);
+    statusEl.className = 'status-badge status-recording';
+    statusEl.textContent = 'Запись...';
+    
+    currentRecording = {
+        rowIndex: rowIndex,
+        startTime: Date.now(),
+        buffer: [],
+        totalSamples: 0
+    };
+    
+    updateActions(rowIndex, true);
+    startTimer(rowIndex);
+    startLiveWaveform(rowIndex);
+}
+
+function stopRecording() {
+    if (!currentRecording) return;
+    
+    const elapsed = (Date.now() - currentRecording.startTime) / 1000;
+    const rowIndex = currentRecording.rowIndex;
+    
+    if (elapsed < MIN_DURATION) {
+        alert(`Слишком коротко! Нужно минимум ${MIN_DURATION} сек.`);
+        return;
+    }
+    
+    setTimeout(() => {
+        const flat = new Float32Array(currentRecording.totalSamples);
+        let offset = 0;
+        for (const chunk of currentRecording.buffer) {
+            flat.set(chunk, offset);
+            offset += chunk.length;
+        }
+        
+        applyFadeOut(flat);
+        
+        const downsampled = downsample(flat, audioContext.sampleRate, TARGET_SAMPLE_RATE);
+        const blob = encodeWAV(downsampled, TARGET_SAMPLE_RATE, 1, 16);
+        
+        phrases[rowIndex].buffer = downsampled;
+        phrases[rowIndex].duration = elapsed;
+        phrases[rowIndex].wavBlob = blob;
+        
+        const row = document.getElementById('row-' + rowIndex);
+        row.classList.remove('recording');
+        row.classList.add('recorded');
+        
+        const statusEl = document.getElementById('status-' + rowIndex);
+        statusEl.className = 'status-badge status-recorded';
+        statusEl.textContent = 'Записано';
+        
+        document.getElementById('dur-' + rowIndex).textContent = elapsed.toFixed(2) + ' с';
+        
+        drawStaticWaveform(rowIndex, downsampled);
+        updateActions(rowIndex, false);
+        updateStats();
+        
+        cancelAnimationFrame(animationFrame);
+        currentRecording = null;
+        
+        // Возвращаем фокус на строку
+        highlightRow(rowIndex);
+    }, 50);
+}
+
+function applyFadeOut(buffer) {
+    const len = buffer.length;
+    if (len <= FADE_OUT_SAMPLES) return;
+    const startFade = len - FADE_OUT_SAMPLES;
+    for (let i = startFade; i < len; i++) {
+        const factor = (len - i) / FADE_OUT_SAMPLES;
+        buffer[i] *= factor;
+    }
+}
+
+function updateActions(rowIndex, isRecording) {
+    const el = document.getElementById('actions-' + rowIndex);
+    const suffix = document.getElementById('fileSuffix').value.trim() || 'user';
+    const fileName = `phrase_${String(rowIndex + 1).padStart(3, '0')}_${suffix}.wav`;
+    
+    if (isRecording) {
+        el.innerHTML = `
+            <span class="timer" id="timer-${rowIndex}">0.0 с</span>
+            <button class="btn btn-success btn-sm" id="stopBtn-${rowIndex}" onclick="stopRecording()" disabled> Стоп</button>
+            <span class="filename-preview" id="preview-${rowIndex}">${fileName}</span>
+        `;
+        
+        setTimeout(() => {
+            const btn = document.getElementById('stopBtn-' + rowIndex);
+            if (btn && currentRecording && currentRecording.rowIndex === rowIndex) {
+                btn.disabled = false;
+            }
+        }, MIN_DURATION * 1000);
+        
+        setTimeout(() => {
+            if (currentRecording && currentRecording.rowIndex === rowIndex) {
+                stopRecording();
+            }
+        }, MAX_DURATION * 1000);
+    } else {
+        const hasData = phrases[rowIndex].buffer !== null;
+        el.innerHTML = `
+            <button class="btn btn-danger btn-sm" onclick="startRecording(${rowIndex})">🔄 Переписать (R)</button>
+            ${hasData ? `<button class="btn btn-primary btn-sm" onclick="playRecording(${rowIndex})">▶ Слушать (Пробел)</button>
+            <button class="btn btn-success btn-sm" onclick="downloadOne(${rowIndex})">💾 WAV (S)</button>` : ''}
+            <span class="filename-preview" id="preview-${rowIndex}">${fileName}</span>
+        `;
+    }
+}
+
+function startTimer(rowIndex) {
+    const update = () => {
+        if (!currentRecording || currentRecording.rowIndex !== rowIndex) return;
+        const elapsed = (Date.now() - currentRecording.startTime) / 1000;
+        const el = document.getElementById('timer-' + rowIndex);
+        if (el) {
+            el.textContent = elapsed.toFixed(1) + ' с';
+            if (elapsed < MIN_DURATION) el.style.color = '#e67e22';
+            else if (elapsed > MAX_DURATION - 2) el.style.color = '#e74c3c';
+            else el.style.color = '#27ae60';
+        }
+        requestAnimationFrame(update);
+    };
+    update();
+}
+
+function startLiveWaveform(rowIndex) {
+    const canvas = document.getElementById('wave-' + rowIndex);
+    const ctx = canvas.getContext('2d');
+    const dataArray = new Uint8Array(analyser.fftSize);
+    
+    const draw = () => {
+        if (!currentRecording || currentRecording.rowIndex !== rowIndex) return;
+        animationFrame = requestAnimationFrame(draw);
+        analyser.getByteTimeDomainData(dataArray);
+        
+        ctx.fillStyle = '#fff5f5';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#e74c3c';
+        ctx.beginPath();
+        
+        const sliceWidth = canvas.width / dataArray.length;
+        let x = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = v * canvas.height / 2;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+            x += sliceWidth;
+        }
+        ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.stroke();
+    };
+    draw();
+}
+
+function drawStaticWaveform(rowIndex, buffer) {
+    const canvas = document.getElementById('wave-' + rowIndex);
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    
+    ctx.fillStyle = '#f0fff4';
+    ctx.fillRect(0, 0, w, h);
+    
+    const step = Math.max(1, Math.floor(buffer.length / w));
+    ctx.strokeStyle = '#27ae60';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x < w; x++) {
+        let min = 1, max = -1;
+        const start = x * step;
+        const end = Math.min(start + step, buffer.length);
+        for (let i = start; i < end; i++) {
+            if (buffer[i] < min) min = buffer[i];
+            if (buffer[i] > max) max = buffer[i];
+        }
+        const y1 = (1 + min) * h / 2;
+        const y2 = (1 + max) * h / 2;
+        ctx.moveTo(x + 0.5, y1);
+        ctx.lineTo(x + 0.5, y2);
+    }
+    ctx.stroke();
+}
+
+function playRecording(rowIndex) {
+    const p = phrases[rowIndex];
+    if (!p.wavBlob) return;
+    
+    // Если уже играет что-то - останавливаем
+    if (audioPlayer && !audioPlayer.paused) {
+        audioPlayer.pause();
+        audioPlayer.currentTime = 0;
+        // Если это та же самая запись - просто запускаем заново, иначе создаем новую
+        if (audioPlayer.src === URL.createObjectURL(p.wavBlob)) {
+             audioPlayer.play();
+             return;
+        }
+    }
+
+    const url = URL.createObjectURL(p.wavBlob);
+    audioPlayer = new Audio(url);
+    audioPlayer.play();
+    
+    audioPlayer.onended = () => {
+        // Можно добавить визуальный сигнал окончания
+    };
+}
+
+function downloadOne(rowIndex) {
+    const p = phrases[rowIndex];
+    if (!p.wavBlob) return;
+    const suffix = document.getElementById('fileSuffix').value.trim() || 'user';
+    const fileName = `phrase_${String(rowIndex + 1).padStart(3, '0')}_${suffix}.wav`;
+    const url = URL.createObjectURL(p.wavBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+async function downloadAll() {
+    const recorded = phrases.map((p, i) => ({ p, i })).filter(x => x.p.wavBlob);
+    if (recorded.length === 0) { alert('Нет записей для скачивания'); return; }
+    
+    if (recorded.length === 1) {
+        downloadOne(recorded[0].i);
+        return;
+    }
+    
+    const zip = new JSZip();
+    const suffix = document.getElementById('fileSuffix').value.trim() || 'user';
+    const txtLines = [];
+
+    recorded.forEach(({ p, i }) => {
+        const fileName = `phrase_${String(i + 1).padStart(3, '0')}_${suffix}.wav`;
+        zip.file(fileName, p.wavBlob);
+        txtLines.push(`${fileName}\t${p.text}`);
+    });
+
+    zip.file('phrases.txt', txtLines.join('\n'));
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'phrases_recordings.zip';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function resetAll() {
+    if (!confirm('Удалить все записи?')) return;
+    phrases.forEach(p => { p.buffer = null; p.duration = 0; p.wavBlob = null; });
+    renderTable();
+    updateStats();
+}
+
+function downsample(buffer, fromRate, toRate) {
+    if (fromRate === toRate) return buffer;
+    const ratio = fromRate / toRate;
+    const newLength = Math.round(buffer.length / ratio);
+    const result = new Float32Array(newLength);
+    
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+    
+    while (offsetResult < result.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+        let accum = 0, count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+            accum += buffer[i];
+            count++;
+        }
+        result[offsetResult] = count > 0 ? accum / count : 0;
+        offsetResult++;
+        offsetBuffer = nextOffsetBuffer;
+    }
+    return result;
+}
+
+function encodeWAV(samples, sampleRate, numChannels, bitDepth) {
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = samples.length * bytesPerSample;
+    const bufferSize = 44 + dataSize;
+    
+    const ab = new ArrayBuffer(bufferSize);
+    const view = new DataView(ab);
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+
+    return new Blob([view], { type: 'audio/wav' });
+}
+
+function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+    }
+}
+
+function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ==========================================
+// УПРАВЛЕНИЕ С КЛАВИАТУРЫ
+// ==========================================
+document.addEventListener('keydown', function(e) {
+    // Игнорируем нажатия, если фокус в текстовом поле ввода фраз
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+        return;
+    }
+
+    // Предотвращаем скролл страницы стрелками и пробелом
+    if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+        e.preventDefault();
+    }
+
+    switch(e.code) {
+        case 'ArrowDown':
+            if (currentRowIndex < phrases.length - 1) {
+                currentRowIndex++;
+                highlightRow(currentRowIndex);
+                // Фокус на таблицу, чтобы следующая навигация работала
+                document.getElementById('mainTable').focus();
+            }
+            break;
+            
+        case 'ArrowUp':
+            if (currentRowIndex > 0) {
+                currentRowIndex--;
+                highlightRow(currentRowIndex);
+                document.getElementById('mainTable').focus();
+            }
+            break;
+            
+        case 'Enter':
+            if (currentRecording) {
+                // Если идет запись - стоп
+                stopRecording();
+            } else {
+                // Если нет записи - старт для текущей строки
+                // Проверяем, не идет ли запись другой строки (на всякий случай)
+                startRecording(currentRowIndex);
+            }
+            break;
+            
+        case 'Space':
+            // Пробел: Воспроизведение
+            if (phrases[currentRowIndex] && phrases[currentRowIndex].wavBlob) {
+                playRecording(currentRowIndex);
+            }
+            break;
+            
+        case 'KeyR':
+            // R: Перезаписать (удалить и начать заново)
+            if (phrases[currentRowIndex] && phrases[currentRowIndex].buffer) {
+                if(confirm('Перезаписать текущую фразу?')) {
+                    phrases[currentRowIndex].buffer = null;
+                    phrases[currentRowIndex].wavBlob = null;
+                    phrases[currentRowIndex].duration = 0;
+                    renderTable(); // Перерисовать, чтобы убрать кнопки Play/Download
+                    updateStats();
+                    startRecording(currentRowIndex);
+                }
+            } else if (!phrases[currentRowIndex].buffer) {
+                // Если еще не записана, просто начинаем
+                startRecording(currentRowIndex);
+            }
+            break;
+            
+        case 'KeyS':
+            // S: Скачать один файл
+            if (phrases[currentRowIndex] && phrases[currentRowIndex].wavBlob) {
+                downloadOne(currentRowIndex);
+            }
+            break;
+            
+        case 'KeyZ':
+            // Z: Скачать всё
+            downloadAll();
+            break;
+            
+        case 'KeyF':
+            // F: Сгенерировать суффикс
+            generateRandomSuffix();
+            break;
+    }
+});
+
+// Обработка потери фокуса (чтобы вернуть его обратно, если кликнули мышкой)
+document.getElementById('recorderPanel').addEventListener('click', function() {
+    if (!currentRecording) {
+        document.getElementById('mainTable').focus();
+    }
+});
+
+</script>
+
+</body>
+</html>
