@@ -13,6 +13,7 @@
     .panel { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     
     textarea { width: 100%; min-height: 100px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-family: monospace; font-size: 14px; resize: vertical; }
+    textarea:focus, input:focus { outline: 2px solid #3498db; outline-offset: 1px; }
     
     .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -94,6 +95,11 @@
         border-radius: 4px;
         margin-top: 4px;
         display: inline-block;
+        transition: background 0.3s;
+    }
+    .filename-preview.updated {
+        background: #d4efdf;
+        color: #27ae60;
     }
     
     .suffix-panel {
@@ -114,12 +120,22 @@
         font-size: 14px;
         width: 200px;
     }
+    .suffix-applied {
+        font-size: 12px;
+        color: #27ae60;
+        font-weight: bold;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    .suffix-applied.show {
+        opacity: 1;
+    }
 </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>⌨️ Phrase Recorder (Safe Mode)</h1>
+    <h1>⌨️ Phrase Recorder</h1>
     
     <div class="panel">
         <h3 style="margin-top:0">1. Введите фразы</h3>
@@ -150,8 +166,9 @@
 
         <div class="suffix-panel">
             <strong>🏷️ Суффикс:</strong>
-            <input type="text" id="fileSuffix" placeholder="например: yura" value="">
-            <button class="btn btn-secondary btn-sm" onclick="generateRandomSuffix()" title="Горячая клавиша: F"> Сгенерировать (F)</button>
+            <input type="text" id="fileSuffix" placeholder="например: yura" value="" autocomplete="off">
+            <button class="btn btn-secondary btn-sm" onclick="generateRandomSuffix()" title="Горячая клавиша: F">🎲 Сгенерировать (F)</button>
+            <span class="suffix-applied" id="suffixApplied">✓ Применено</span>
         </div>
 
         <div class="stats">
@@ -160,12 +177,12 @@
             <div class="stat-box">Осталось: <b id="statLeft">0</b></div>
             <div style="flex:1"></div>
             <button class="btn btn-success" onclick="downloadAll()" title="Горячая клавиша: Z">📦 Скачать всё (Z)</button>
-            <button class="btn btn-secondary" onclick="resetAll()">️ Очистить</button>
+            <button class="btn btn-secondary" onclick="resetAll()">🗑️ Очистить</button>
         </div>
         
         <div class="hint" style="margin-bottom:10px">
-            ✅ Исправлен баг с исчезновением записей при перезаписи.
-            <br>️ Требования: 3–15 сек.
+            ✅ Звук: 8kHz, 16bit, Mono. Плавное затухание.
+            <br>⚠️ Требования: 3–15 сек.
         </div>
         
         <table id="mainTable" tabindex="0">
@@ -260,17 +277,11 @@ function loadFromFile(event) {
 
 function generateRandomSuffix() {
     const now = new Date();
-    const suffix = `s${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
+    const suffix = `s${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
     document.getElementById('fileSuffix').value = suffix;
-    updateFilenamePreviews();
-    // Обновляем превью у всех строк без перерисовки всей таблицы
-    phrases.forEach((_, i) => {
-        const el = document.getElementById('preview-' + i);
-        if (el) {
-             const fileName = `phrase_${String(i + 1).padStart(3, '0')}_${suffix}.wav`;
-             el.textContent = fileName;
-        }
-    });
+    // Обновляем только превью, не перерисовывая кнопки
+    updateFilenamePreviews(true);
+    showSuffixApplied();
 }
 
 function buildTable() {
@@ -300,7 +311,6 @@ function renderTable() {
         if (i === currentRowIndex) tr.classList.add('active-row');
         if (p.buffer) tr.classList.add('recorded');
         
-        // Определяем статус
         let statusClass = 'status-pending';
         let statusText = 'Не записано';
         if (currentRecording && currentRecording.rowIndex === i) {
@@ -319,17 +329,14 @@ function renderTable() {
             <td><span class="status-badge ${statusClass}" id="status-${i}">${statusText}</span></td>
             <td><canvas class="waveform" id="wave-${i}" width="200" height="40"></canvas></td>
             <td class="duration" id="dur-${i}">${p.duration ? p.duration.toFixed(2) + ' с' : '—'}</td>
-            <td class="actions" id="actions-${i}">
-                <!-- Кнопки генерируются динамически функцией updateActions -->
-            </td>
+            <td class="actions" id="actions-${i}"></td>
         `;
         tbody.appendChild(tr);
         
-        // Инициализируем кнопки и канвас
         updateActions(i, (currentRecording && currentRecording.rowIndex === i));
         if (p.buffer) drawStaticWaveform(i, p.buffer);
     });
-    updateFilenamePreviews();
+    updateFilenamePreviews(false);
     highlightRow(currentRowIndex);
 }
 
@@ -350,28 +357,44 @@ function updateStats() {
     document.getElementById('statLeft').textContent = total - done;
 }
 
-document.getElementById('fileSuffix').addEventListener('input', updateFilenamePreviews);
-
-function updateFilenamePreviews() {
+// Обновление превью имен файлов
+// highlight = true — подсвечивает измененные превью зеленым на короткое время
+function updateFilenamePreviews(highlight = false) {
     const suffix = document.getElementById('fileSuffix').value.trim() || 'user';
     phrases.forEach((_, i) => {
         const el = document.getElementById('preview-' + i);
         if (el) {
             const fileName = `phrase_${String(i + 1).padStart(3, '0')}_${suffix}.wav`;
             el.textContent = fileName;
+            if (highlight) {
+                el.classList.add('updated');
+                setTimeout(() => el.classList.remove('updated'), 800);
+            }
         }
     });
 }
 
-// ГЛАВНОЕ ИЗМЕНЕНИЕ: startRecording теперь НЕ вызывает renderTable() полностью
+function showSuffixApplied() {
+    const el = document.getElementById('suffixApplied');
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1500);
+}
+
+// ВАЖНО: обновляем превью при вводе, но НЕ трогаем фокус
+document.getElementById('fileSuffix').addEventListener('input', function() {
+    updateFilenamePreviews(true);
+});
+
+// При потере фокуса поля суффикса — показываем "применено"
+document.getElementById('fileSuffix').addEventListener('blur', function() {
+    showSuffixApplied();
+});
+
 async function startRecording(rowIndex) {
-    // Если уже идет запись другой строки, блокируем
     if (currentRecording && currentRecording.rowIndex !== rowIndex) {
          alert('Сначала завершите текущую запись (Enter)');
          return;
     }
-    
-    // Если идет запись ЭТОЙ же строки (редкий кейс), игнорируем
     if (currentRecording && currentRecording.rowIndex === rowIndex) {
         return;
     }
@@ -383,8 +406,6 @@ async function startRecording(rowIndex) {
     await new Promise(r => setTimeout(r, 150));
 
     const row = document.getElementById('row-' + rowIndex);
-    
-    // Обновляем визуальный статус строки БЕЗ перерисовки всей таблицы
     row.classList.add('recording');
     row.classList.remove('active-row');
     
@@ -399,7 +420,6 @@ async function startRecording(rowIndex) {
         totalSamples: 0
     };
     
-    // Обновляем только кнопки действий для этой строки
     updateActions(rowIndex, true);
     startTimer(rowIndex);
     startLiveWaveform(rowIndex);
@@ -413,7 +433,6 @@ function stopRecording() {
     
     if (elapsed < MIN_DURATION) {
         alert(`Слишком коротко! Нужно минимум ${MIN_DURATION} сек.`);
-        // Возвращаем статус "Не записано" или "Записано" (если была старая версия)
         const p = phrases[rowIndex];
         const statusEl = document.getElementById('status-' + rowIndex);
         const row = document.getElementById('row-' + rowIndex);
@@ -448,8 +467,6 @@ function stopRecording() {
         const downsampled = downsample(flat, audioContext.sampleRate, TARGET_SAMPLE_RATE);
         const blob = encodeWAV(downsampled, TARGET_SAMPLE_RATE, 1, 16);
         
-        // ВОТ ЗДЕСЬ МЫ ЗАПИСЫВАЕМ ДАННЫЕ В МАССИВ
-        // Это заменяет старые данные, если они были (перезапись)
         phrases[rowIndex].buffer = downsampled;
         phrases[rowIndex].duration = elapsed;
         phrases[rowIndex].wavBlob = blob;
@@ -495,7 +512,7 @@ function updateActions(rowIndex, isRecording) {
     if (isRecording) {
         el.innerHTML = `
             <span class="timer" id="timer-${rowIndex}">0.0 с</span>
-            <button class="btn btn-success btn-sm" id="stopBtn-${rowIndex}" onclick="stopRecording()" disabled> Стоп</button>
+            <button class="btn btn-success btn-sm" id="stopBtn-${rowIndex}" onclick="stopRecording()" disabled>⏹ Стоп</button>
             <span class="filename-preview" id="preview-${rowIndex}">${fileName}</span>
         `;
         
@@ -513,7 +530,6 @@ function updateActions(rowIndex, isRecording) {
         }, MAX_DURATION * 1000);
     } else {
         const hasData = phrases[rowIndex].buffer !== null;
-        // Кнопка "Перезаписать" теперь просто вызывает startRecording, не очищая данные заранее
         el.innerHTML = `
             <button class="btn btn-danger btn-sm" onclick="startRecording(${rowIndex})">🔄 Перезаписать (R)</button>
             ${hasData ? `<button class="btn btn-primary btn-sm" onclick="playRecording(${rowIndex})">▶ Слушать (Пробел)</button>
@@ -733,7 +749,13 @@ function escapeHtml(s) {
 // УПРАВЛЕНИЕ С КЛАВИАТУРЫ
 // ==========================================
 document.addEventListener('keydown', function(e) {
+    // Игнорируем, если фокус в поле ввода (суффикс или textarea)
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+        // Но разрешаем Escape для снятия фокуса с поля суффикса
+        if (e.code === 'Escape' && e.target.id === 'fileSuffix') {
+            e.target.blur();
+            document.getElementById('mainTable').focus();
+        }
         return;
     }
 
@@ -773,10 +795,7 @@ document.addEventListener('keydown', function(e) {
             break;
             
         case 'KeyR':
-            // R: Перезаписать. Теперь просто запускаем запись заново.
-            // Данные удалятся только после успешной stopRecording.
             if (currentRecording && currentRecording.rowIndex === currentRowIndex) {
-                // Если уже идет запись этой строки, ничего не делаем (или можно остановить)
                 return;
             }
             startRecording(currentRowIndex);
@@ -798,7 +817,17 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-document.getElementById('recorderPanel').addEventListener('click', function() {
+// ИСПРАВЛЕНИЕ: не перехватываем клик, если он был по полю ввода
+document.getElementById('recorderPanel').addEventListener('click', function(e) {
+    // Если клик был по полю суффикса или textarea — не трогаем фокус
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+    }
+    // Если клик был по кнопке — тоже не трогаем фокус (кнопка сама его заберет)
+    if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+        return;
+    }
+    // Иначе — возвращаем фокус на таблицу для работы клавиатуры
     if (!currentRecording) {
         document.getElementById('mainTable').focus();
     }
