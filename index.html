@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Phrase Recorder (Keyboard Control)</title>
+<title>Phrase Recorder</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
     * { box-sizing: border-box; }
@@ -34,7 +34,6 @@
     th { background: #34495e; color: white; padding: 10px; text-align: left; font-size: 13px; position: sticky; top: 0; z-index: 10; }
     td { padding: 10px; border-bottom: 1px solid #ecf0f1; vertical-align: middle; }
     
-    /* Подсветка активной строки */
     tr.active-row { 
         background-color: #fff8e1 !important; 
         border-left: 4px solid #f1c40f;
@@ -120,7 +119,7 @@
 <body>
 
 <div class="container">
-    <h1>⌨️ Phrase Recorder (Keyboard Mode)</h1>
+    <h1>⌨️ Phrase Recorder (Safe Mode)</h1>
     
     <div class="panel">
         <h3 style="margin-top:0">1. Введите фразы</h3>
@@ -139,7 +138,6 @@
 
     <div class="panel" id="recorderPanel" style="display:none">
         
-        <!-- Подсказка по горячим клавишам -->
         <div class="hotkeys-hint">
             <span><span class="key-badge">Enter</span> Старт / Стоп</span>
             <span><span class="key-badge">↓</span> <span class="key-badge">↑</span> Выбор строки</span>
@@ -153,7 +151,7 @@
         <div class="suffix-panel">
             <strong>🏷️ Суффикс:</strong>
             <input type="text" id="fileSuffix" placeholder="например: yura" value="">
-            <button class="btn btn-secondary btn-sm" onclick="generateRandomSuffix()" title="Горячая клавиша: F">🎲 Сгенерировать (F)</button>
+            <button class="btn btn-secondary btn-sm" onclick="generateRandomSuffix()" title="Горячая клавиша: F"> Сгенерировать (F)</button>
         </div>
 
         <div class="stats">
@@ -166,11 +164,10 @@
         </div>
         
         <div class="hint" style="margin-bottom:10px">
-            ✅ Звук: 8kHz, 16bit, Mono. Плавное затухание.
+            ✅ Исправлен баг с исчезновением записей при перезаписи.
             <br>️ Требования: 3–15 сек.
         </div>
         
-        <!-- Добавлен tabindex="0" чтобы таблица могла получать фокус -->
         <table id="mainTable" tabindex="0">
             <thead>
                 <tr>
@@ -202,9 +199,8 @@ let currentRecording = null;
 let animationFrame = null;
 let isProcessing = false;
 
-// Управление фокусом и навигацией
 let currentRowIndex = 0;
-let audioPlayer = null; // Для управления воспроизведением
+let audioPlayer = null;
 
 async function initAudio() {
     if (audioContext) return;
@@ -267,9 +263,13 @@ function generateRandomSuffix() {
     const suffix = `s${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
     document.getElementById('fileSuffix').value = suffix;
     updateFilenamePreviews();
-    // Обновить превью у всех
+    // Обновляем превью у всех строк без перерисовки всей таблицы
     phrases.forEach((_, i) => {
-        if(phrases[i].buffer) updateActions(i, false);
+        const el = document.getElementById('preview-' + i);
+        if (el) {
+             const fileName = `phrase_${String(i + 1).padStart(3, '0')}_${suffix}.wav`;
+             el.textContent = fileName;
+        }
     });
 }
 
@@ -284,12 +284,10 @@ function buildTable() {
         wavBlob: null
     }));
     
-    currentRowIndex = 0; // Сброс курсора
+    currentRowIndex = 0;
     renderTable();
     document.getElementById('recorderPanel').style.display = 'block';
     updateStats();
-    
-    // Фокус на таблицу для работы клавиатуры
     setTimeout(() => document.getElementById('mainTable').focus(), 100);
 }
 
@@ -300,28 +298,43 @@ function renderTable() {
         const tr = document.createElement('tr');
         tr.id = 'row-' + i;
         if (i === currentRowIndex) tr.classList.add('active-row');
+        if (p.buffer) tr.classList.add('recorded');
         
+        // Определяем статус
+        let statusClass = 'status-pending';
+        let statusText = 'Не записано';
+        if (currentRecording && currentRecording.rowIndex === i) {
+            statusClass = 'status-recording';
+            statusText = 'Запись...';
+            tr.classList.add('recording');
+            tr.classList.remove('active-row');
+        } else if (p.buffer) {
+            statusClass = 'status-recorded';
+            statusText = 'Записано';
+        }
+
         tr.innerHTML = `
             <td>${i + 1}</td>
             <td class="phrase-text">${escapeHtml(p.text)}</td>
-            <td><span class="status-badge status-pending" id="status-${i}">Не записано</span></td>
+            <td><span class="status-badge ${statusClass}" id="status-${i}">${statusText}</span></td>
             <td><canvas class="waveform" id="wave-${i}" width="200" height="40"></canvas></td>
-            <td class="duration" id="dur-${i}">—</td>
+            <td class="duration" id="dur-${i}">${p.duration ? p.duration.toFixed(2) + ' с' : '—'}</td>
             <td class="actions" id="actions-${i}">
-                <button class="btn btn-danger btn-sm" onclick="startRecording(${i})"> Записать</button>
-                <span class="filename-preview" id="preview-${i}">...</span>
+                <!-- Кнопки генерируются динамически функцией updateActions -->
             </td>
         `;
         tbody.appendChild(tr);
+        
+        // Инициализируем кнопки и канвас
+        updateActions(i, (currentRecording && currentRecording.rowIndex === i));
+        if (p.buffer) drawStaticWaveform(i, p.buffer);
     });
     updateFilenamePreviews();
     highlightRow(currentRowIndex);
 }
 
 function highlightRow(index) {
-    // Убираем подсветку со всех
     document.querySelectorAll('tr').forEach(r => r.classList.remove('active-row'));
-    // Добавляем текущей
     const row = document.getElementById('row-' + index);
     if (row) {
         row.classList.add('active-row');
@@ -350,16 +363,19 @@ function updateFilenamePreviews() {
     });
 }
 
+// ГЛАВНОЕ ИЗМЕНЕНИЕ: startRecording теперь НЕ вызывает renderTable() полностью
 async function startRecording(rowIndex) {
-    if (currentRecording) {
-        // Если уже идет запись другой строки, останавливаем её сначала (опционально)
-        // Но лучше запретить, чтобы не запутаться
-        if (currentRecording.rowIndex !== rowIndex) {
-             alert('Сначала завершите текущую запись (Enter)');
-             return;
-        }
+    // Если уже идет запись другой строки, блокируем
+    if (currentRecording && currentRecording.rowIndex !== rowIndex) {
+         alert('Сначала завершите текущую запись (Enter)');
+         return;
     }
     
+    // Если идет запись ЭТОЙ же строки (редкий кейс), игнорируем
+    if (currentRecording && currentRecording.rowIndex === rowIndex) {
+        return;
+    }
+
     await initAudio();
     if (!audioContext) return;
     if (audioContext.state === 'suspended') await audioContext.resume();
@@ -367,8 +383,10 @@ async function startRecording(rowIndex) {
     await new Promise(r => setTimeout(r, 150));
 
     const row = document.getElementById('row-' + rowIndex);
+    
+    // Обновляем визуальный статус строки БЕЗ перерисовки всей таблицы
     row.classList.add('recording');
-    row.classList.remove('active-row'); // Убираем желтую рамку во время записи
+    row.classList.remove('active-row');
     
     const statusEl = document.getElementById('status-' + rowIndex);
     statusEl.className = 'status-badge status-recording';
@@ -381,6 +399,7 @@ async function startRecording(rowIndex) {
         totalSamples: 0
     };
     
+    // Обновляем только кнопки действий для этой строки
     updateActions(rowIndex, true);
     startTimer(rowIndex);
     startLiveWaveform(rowIndex);
@@ -394,6 +413,25 @@ function stopRecording() {
     
     if (elapsed < MIN_DURATION) {
         alert(`Слишком коротко! Нужно минимум ${MIN_DURATION} сек.`);
+        // Возвращаем статус "Не записано" или "Записано" (если была старая версия)
+        const p = phrases[rowIndex];
+        const statusEl = document.getElementById('status-' + rowIndex);
+        const row = document.getElementById('row-' + rowIndex);
+        
+        row.classList.remove('recording');
+        if (p.buffer) {
+            row.classList.add('recorded');
+            statusEl.className = 'status-badge status-recorded';
+            statusEl.textContent = 'Записано';
+            updateActions(rowIndex, false);
+        } else {
+            statusEl.className = 'status-badge status-pending';
+            statusEl.textContent = 'Не записано';
+            updateActions(rowIndex, false);
+        }
+        cancelAnimationFrame(animationFrame);
+        currentRecording = null;
+        highlightRow(rowIndex);
         return;
     }
     
@@ -410,6 +448,8 @@ function stopRecording() {
         const downsampled = downsample(flat, audioContext.sampleRate, TARGET_SAMPLE_RATE);
         const blob = encodeWAV(downsampled, TARGET_SAMPLE_RATE, 1, 16);
         
+        // ВОТ ЗДЕСЬ МЫ ЗАПИСЫВАЕМ ДАННЫЕ В МАССИВ
+        // Это заменяет старые данные, если они были (перезапись)
         phrases[rowIndex].buffer = downsampled;
         phrases[rowIndex].duration = elapsed;
         phrases[rowIndex].wavBlob = blob;
@@ -431,7 +471,6 @@ function stopRecording() {
         cancelAnimationFrame(animationFrame);
         currentRecording = null;
         
-        // Возвращаем фокус на строку
         highlightRow(rowIndex);
     }, 50);
 }
@@ -448,6 +487,8 @@ function applyFadeOut(buffer) {
 
 function updateActions(rowIndex, isRecording) {
     const el = document.getElementById('actions-' + rowIndex);
+    if (!el) return;
+    
     const suffix = document.getElementById('fileSuffix').value.trim() || 'user';
     const fileName = `phrase_${String(rowIndex + 1).padStart(3, '0')}_${suffix}.wav`;
     
@@ -472,8 +513,9 @@ function updateActions(rowIndex, isRecording) {
         }, MAX_DURATION * 1000);
     } else {
         const hasData = phrases[rowIndex].buffer !== null;
+        // Кнопка "Перезаписать" теперь просто вызывает startRecording, не очищая данные заранее
         el.innerHTML = `
-            <button class="btn btn-danger btn-sm" onclick="startRecording(${rowIndex})">🔄 Переписать (R)</button>
+            <button class="btn btn-danger btn-sm" onclick="startRecording(${rowIndex})">🔄 Перезаписать (R)</button>
             ${hasData ? `<button class="btn btn-primary btn-sm" onclick="playRecording(${rowIndex})">▶ Слушать (Пробел)</button>
             <button class="btn btn-success btn-sm" onclick="downloadOne(${rowIndex})">💾 WAV (S)</button>` : ''}
             <span class="filename-preview" id="preview-${rowIndex}">${fileName}</span>
@@ -530,6 +572,7 @@ function startLiveWaveform(rowIndex) {
 
 function drawStaticWaveform(rowIndex, buffer) {
     const canvas = document.getElementById('wave-' + rowIndex);
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const w = canvas.width, h = canvas.height;
     
@@ -560,24 +603,14 @@ function playRecording(rowIndex) {
     const p = phrases[rowIndex];
     if (!p.wavBlob) return;
     
-    // Если уже играет что-то - останавливаем
     if (audioPlayer && !audioPlayer.paused) {
         audioPlayer.pause();
         audioPlayer.currentTime = 0;
-        // Если это та же самая запись - просто запускаем заново, иначе создаем новую
-        if (audioPlayer.src === URL.createObjectURL(p.wavBlob)) {
-             audioPlayer.play();
-             return;
-        }
     }
 
     const url = URL.createObjectURL(p.wavBlob);
     audioPlayer = new Audio(url);
     audioPlayer.play();
-    
-    audioPlayer.onended = () => {
-        // Можно добавить визуальный сигнал окончания
-    };
 }
 
 function downloadOne(rowIndex) {
@@ -700,12 +733,10 @@ function escapeHtml(s) {
 // УПРАВЛЕНИЕ С КЛАВИАТУРЫ
 // ==========================================
 document.addEventListener('keydown', function(e) {
-    // Игнорируем нажатия, если фокус в текстовом поле ввода фраз
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
         return;
     }
 
-    // Предотвращаем скролл страницы стрелками и пробелом
     if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
         e.preventDefault();
     }
@@ -715,7 +746,6 @@ document.addEventListener('keydown', function(e) {
             if (currentRowIndex < phrases.length - 1) {
                 currentRowIndex++;
                 highlightRow(currentRowIndex);
-                // Фокус на таблицу, чтобы следующая навигация работала
                 document.getElementById('mainTable').focus();
             }
             break;
@@ -730,59 +760,44 @@ document.addEventListener('keydown', function(e) {
             
         case 'Enter':
             if (currentRecording) {
-                // Если идет запись - стоп
                 stopRecording();
             } else {
-                // Если нет записи - старт для текущей строки
-                // Проверяем, не идет ли запись другой строки (на всякий случай)
                 startRecording(currentRowIndex);
             }
             break;
             
         case 'Space':
-            // Пробел: Воспроизведение
             if (phrases[currentRowIndex] && phrases[currentRowIndex].wavBlob) {
                 playRecording(currentRowIndex);
             }
             break;
             
         case 'KeyR':
-            // R: Перезаписать (удалить и начать заново)
-            if (phrases[currentRowIndex] && phrases[currentRowIndex].buffer) {
-                if(confirm('Перезаписать текущую фразу?')) {
-                    phrases[currentRowIndex].buffer = null;
-                    phrases[currentRowIndex].wavBlob = null;
-                    phrases[currentRowIndex].duration = 0;
-                    renderTable(); // Перерисовать, чтобы убрать кнопки Play/Download
-                    updateStats();
-                    startRecording(currentRowIndex);
-                }
-            } else if (!phrases[currentRowIndex].buffer) {
-                // Если еще не записана, просто начинаем
-                startRecording(currentRowIndex);
+            // R: Перезаписать. Теперь просто запускаем запись заново.
+            // Данные удалятся только после успешной stopRecording.
+            if (currentRecording && currentRecording.rowIndex === currentRowIndex) {
+                // Если уже идет запись этой строки, ничего не делаем (или можно остановить)
+                return;
             }
+            startRecording(currentRowIndex);
             break;
             
         case 'KeyS':
-            // S: Скачать один файл
             if (phrases[currentRowIndex] && phrases[currentRowIndex].wavBlob) {
                 downloadOne(currentRowIndex);
             }
             break;
             
         case 'KeyZ':
-            // Z: Скачать всё
             downloadAll();
             break;
             
         case 'KeyF':
-            // F: Сгенерировать суффикс
             generateRandomSuffix();
             break;
     }
 });
 
-// Обработка потери фокуса (чтобы вернуть его обратно, если кликнули мышкой)
 document.getElementById('recorderPanel').addEventListener('click', function() {
     if (!currentRecording) {
         document.getElementById('mainTable').focus();
